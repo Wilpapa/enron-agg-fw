@@ -1,0 +1,266 @@
+
+// indexes ===========================
+db.messages.createIndex({"headers.From":1})
+db.messages.createIndex({"headers.To":1})
+db.messages.createIndex({"headers.Date":1})
+
+// Lookup sample, find sent mails per user, by looking up from messages to users
+// Number of mails sent on 1 day compared to number of mails sent on the month
+
+matchDate = { 
+		$match:{
+			"headers.Date" : {
+				$gte : ISODate("2001-03-01T00:00:00.000Z"),
+				$lt : ISODate("2001-03-02T00:00:00.000Z")
+				}
+			}
+	}
+
+enronSource = {
+		$match : { "headers.From": /@enron.com$/ },
+	}
+
+project = {
+		$project : {
+		sender : "$headers.From"
+		}
+	}
+
+countSort = {
+		$sortByCount : "$sender"
+		}
+
+lookup = {
+     $lookup:
+       {
+         from: "users",
+         localField: "_id",
+         foreignField: "_id",
+         as: "sentInMonth"
+       }
+  }
+
+unwind = {
+		$unwind : "$sentInMonth"
+	}
+
+percentage = {
+		$project : {
+		ratio : { $divide : ["$count","$sentInMonth.count"]}
+		}
+}
+
+db.messages.aggregate([
+			matchDate,
+			enronSource,
+			project,
+			countSort,
+			lookup,
+			unwind,
+			percentage
+			],
+			{cursor:{}}
+)
+
+// pairs from/to with number of mails exchanged +over a period of time ========================
+
+// this group is to ensure there are no duplicates in the To field
+groupFrom = {
+		$group:{
+			"_id":{
+				'_id':'$_id',
+				From:"$headers.From"
+				},
+			To:{
+				$addToSet:'$headers.To'
+			 	}
+			}
+	}
+
+groupCount = {
+		$group:{
+			"_id":{
+				From:"$_id.From",
+				To:"$To"
+				},
+			nb:{$sum:1}
+			}
+		}
+
+db.messages.aggregate([ 
+	{$unwind:"$headers.To"}, 
+	groupFrom,
+	{$unwind:"$To"}, 
+	groupCount,
+	{$sort:{nb:-1}}
+])
+
+// same between 2 dates ======================
+
+matchDate = { 
+		$match:{
+			"headers.Date" : {
+				$gte : ISODate("2001-03-01T00:00:00.000Z"),
+				$lt : ISODate("2001-04-01T00:00:00.000Z")
+				}
+			}
+	}
+
+db.messages.aggregate([ 
+	matchDate,
+	{$unwind:"$headers.To"}, 
+	groupFrom,
+	{$unwind:"$To"}, 
+	groupCount,
+	{$sort:{nb:-1}}
+])
+
+// sorted by sender ===================
+
+db.messages.aggregate([ 
+	matchDate,
+	{$unwind:"$headers.To"}, 
+	groupFrom,
+	{$unwind:"$To"}, 
+	groupCount,
+	{$sort:{"_id.From":1}}
+])
+
+// count mail exchanged between each SMTP domain pair =====================
+
+groupFrom = {
+		$group:{
+			"_id":{
+				'_id':'$_id',
+				From:"$headers.From"
+				},
+			To:{
+				$addToSet:'$headers.To'
+			 	}
+			}
+	}
+
+projectDomains = { 
+		$project : { 
+				_id : "$_id._id",
+				toDomain : { $arrayElemAt: [ {$split: ["$To", "@"]},-1] }, 
+				fromDomain : { $arrayElemAt: [ {$split: ["$_id.From", "@"]},-1] } 
+			} 
+	}
+
+domainCount = {
+		$group:{
+			"_id":{
+				From:"$fromDomain",
+				To:"$toDomain"
+				},
+			nb:{$sum:1}
+			}
+		}
+
+db.messages.aggregate([ 
+	matchDate,
+	{$unwind:"$headers.To"}, 
+	groupFrom,
+	{$unwind:"$To"}, 
+	projectDomains,
+	domainCount,
+	{ $sort:{"_id:From":1,"_id.To":1}}
+])
+
+// Only outgoing mails =========================
+
+enronSource = {
+		$match : { "headers.From": /@enron.com$/ },
+	}
+
+notEnronTarget = {
+		$match : { "_id.To" : {$ne : "enron.com"} }
+	}
+
+db.messages.aggregate([ 
+	matchDate,
+	enronSource,
+	{$unwind:"$headers.To"}, 
+	groupFrom,
+	{$unwind:"$To"}, 
+	projectDomains,
+	domainCount,
+	notEnronTarget,
+	{ $sort:{"nb":-1}}
+])
+
+// Count sent mail per hour ===================
+
+hourOfMail = {
+		$project : {
+				hour : { $hour : "$headers.Date" }
+			}
+	}
+
+hourCount = {
+		$group:{
+			"_id" : "$hour",
+			nb:{$sum:1}
+			}
+		}
+
+db.messages.aggregate([ 
+	hourOfMail,
+	hourCount,
+	{ $sort:{"_id":1}}
+])
+
+// Number of mails off hours per sender
+
+
+enronSource = {
+		$match : { "headers.From": /@enron.com$/ },
+	}
+	
+project = {
+		$project : {
+		sender : "$headers.From",
+		hour : {$hour : "$headers.Date"}
+		}
+	}
+
+offHours = {
+	$match : {
+				$or : [
+					{hour: {$lt : 6}},
+					{hour : {$gt : 19}}
+					]
+			}
+	}
+
+		
+ohCountSort = {
+		$sortByCount : "$sender"
+		}
+	
+
+db.messages.aggregate([ 
+	enronSource,
+	project,
+	offHours,
+	ohCountSort,
+])
+
+// Facets, total mails per sender and off hours
+
+facetMailUsage = {
+				$facet : {
+						"numberOfMailSent" : [enronSource,
+											project,
+											ohCountSort,],
+						"mailsOffHours" : [enronSource,
+											project,
+											offHours,
+											ohCountSort]
+				}
+}
+
+db.messages.aggregate([
+	facetMailUsage
+])
