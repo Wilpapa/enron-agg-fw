@@ -9,6 +9,11 @@ Requires the specific Enron DB, as it is modified from the original (recipients 
 
 **Please note that this repo is for training and understanding only**
 
+Dataset file
+------------
+
+Download here : https://s3.eu-west-3.amazonaws.com/gmeister/datasets/enronmaildb.zip
+
 Installation
 ------------
 
@@ -21,7 +26,7 @@ This creates the "enron" database, and the "messages" collection.
 To run the Python script you need pymongo installed :
 
     $ pip install pymongo
-    
+
 Usage
 -----
 
